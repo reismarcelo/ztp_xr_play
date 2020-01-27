@@ -1,0 +1,35 @@
+!! IOS XR Configuration
+!
+username cisco
+ group root-lr
+ group cisco-support
+ secret 0 cisco123
+!
+line console
+ exec-timeout 0 0
+ absolute-timeout 0
+ session-timeout 0
+!
+line default
+ exec-timeout 0 0
+ absolute-timeout 0
+ session-timeout 0
+!
+call-home
+ service active
+ contact smart-licensing
+ profile CiscoTAC-1
+  active
+  destination transport-method http
+ !
+!
+netconf-yang agent
+ ssh
+!
+interface MgmtEth0/RP0/CPU0/0
+ description "Mgmt test 3"
+ no shutdown
+!
+ssh server v2
+ssh server netconf vrf default
+end
