@@ -1,5 +1,5 @@
 {
   "day0_config_url": "http://192.168.122.211/day0_config.txt",
-  "golden_label": "7.0.11-ALPHA",
-  "golden_url": "http://192.168.122.211/files/8000-golden-x64-7.0.11-ALPHA.iso"
+  "golden_label": "7.0.11-BETA",
+  "golden_url": "http://192.168.122.211/files/8000-golden-x64-7.0.11-BETA.iso"
 }
