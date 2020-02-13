@@ -30,9 +30,6 @@ def main():
     ztp_api.syslogger.info('Loading metadata')
     meta = ztp_api.get_metadata()
 
-    ztp_api.syslogger.info('Loading day0 configuration')
-    ztp_api.load_day0_config(meta.day0_config_url)
-
     ztp_api.syslogger.info('Checking whether software upgrade is needed')
     running_label = ztp_api.get_running_label()
     ztp_api.syslogger.info('Running: {running}, Golden: {golden}'.format(running=running_label,
@@ -42,6 +39,9 @@ def main():
     else:
         ztp_api.syslogger.info('Installing "{label}" image'.format(label=meta.golden_label))
         ztp_api.install_image(meta.golden_url)
+
+    ztp_api.syslogger.info('Loading day0 configuration')
+    ztp_api.load_day0_config(meta.day0_config_url)
 
     ztp_api.syslogger.info('Custom ZTP process complete')
 
