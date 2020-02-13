@@ -1,0 +1,40 @@
+# dhcpd.conf
+#
+
+option space cisco-vendor-id-vendor-class code width 1 length width 1;
+option vendor-class.cisco-vendor-id-vendor-class code 9 = {string};
+
+default-lease-time 600;
+max-lease-time 7200;
+
+log-facility local7;
+log(error, concat("user-class: ", substring(option user-class, 0, 21)));
+
+class "exr-config" {
+  match if substring(option user-class, 0, 10) = "exr-config";
+}
+
+class "core-spit" {
+  match if (substring(option dhcp-client-identifier,0,11) = "FOC2217CMLB");
+}
+
+subnet 192.168.122.0 netmask 255.255.255.0 {
+  pool {
+    allow members of "core-spit";
+    range 192.168.122.200 192.168.122.220;
+    option routers 192.168.122.1;
+    if exists user-class and option user-class = "exr-config" {
+      filename = "http://192.168.122.211/ztp_xr_play.py";
+      on commit {
+        log (info, option vendor-class.cisco-vendor-id-vendor-class);
+        log (info, substring(option vendor-class.cisco-vendor-id-vendor-class,3,11));
+        log (info, substring(option vendor-class.cisco-vendor-id-vendor-class,19,99));
+        set clip = binary-to-ascii(10, 8, ".", leased-address);
+        set clhw = binary-to-ascii(16, 8, ":", substring(hardware, 1, 6));
+        set clserial = substring(option dhcp-client-identifier,0,11);
+        set clvendor = "cisco";
+        execute("/opt/ztp_scripts/ztp-config.sh", "commit", clip, clhw, clserial, clvendor);
+      }
+    }
+  }
+}
