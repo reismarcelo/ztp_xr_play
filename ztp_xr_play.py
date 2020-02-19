@@ -26,7 +26,6 @@ SYSLOG_CONFIG = {
 def main():
     ztp_api = ZtpApi(**SYSLOG_CONFIG)
 
-    # ztp_api.toggle_debug(True)
     ztp_api.syslogger.info('Loading metadata')
     meta = ztp_api.get_metadata()
 
@@ -39,6 +38,15 @@ def main():
     else:
         ztp_api.syslogger.info('Installing "{label}" image'.format(label=meta.golden_label))
         ztp_api.install_image(meta.golden_url)
+
+    ztp_api.syslogger.info('Checking whether FPDs are up-to-date')
+    if ztp_api.need_fpd_upgrade:
+        ztp_api.syslogger.info('Need FPD upgrade')
+        ztp_api.upgrade_fpd()
+        # Device will reload, need to exit ZTP at this point
+        return
+    else:
+        ztp_api.syslogger.info('FPD upgrade not needed')
 
     ztp_api.syslogger.info('Loading day0 configuration')
     ztp_api.load_day0_config(meta.day0_config_url)
@@ -66,6 +74,18 @@ class ZtpApi(ZtpHelpers):
                 return match.group(1)
         else:
             raise ZTPErrorException('"show version" command parse failed')
+
+    @property
+    def need_fpd_upgrade(self):
+        show_cmd = self.xrcmd({"exec_cmd": "show hw-module fpd"})
+        if not succeeded(show_cmd):
+            raise ZTPErrorException("Error issuing the 'show hw-module fpd' command")
+
+        is_complete, is_success = parse_show_hwmodule(show_cmd['output'])
+        if not is_success:
+            raise ZTPErrorException("Error while checking FPD status")
+
+        return not is_complete
 
     def load_day0_config(self, url, target_folder='/disk0:/ztp'):
         download = self.download_file(url, target_folder)
@@ -102,11 +122,35 @@ class ZtpApi(ZtpHelpers):
 
         return {"status": "success", "output": "image successfully installed"}
 
-    def wait_for(self, cmd, cmd_parser, budget=600, interval=15):
+    def upgrade_fpd(self):
+        fpd_upgrade = self.xrcmd({"exec_cmd": "upgrade hw-module location all fpd all"})
+        if not succeeded(fpd_upgrade):
+            raise ZTPErrorException('Error upgrading FPDs')
+
+        self.syslogger.info('Waiting for FPD upgrade to complete')
+        wait_complete = self.wait_for('show hw-module fpd', parse_show_hwmodule)
+        if not succeeded(wait_complete):
+            raise ZTPErrorException('Error upgrading FPDs, {detail}'.format(detail=wait_complete['output']))
+
+        self.syslogger.info('FPD upgrade completed successfully, will now reload the device')
+        device_reload = self.xrcmd({"exec_cmd": "reload location all"})
+        if not succeeded(device_reload):
+            raise ZTPErrorException('Error issuing the reload command')
+
+        return {"status": "success", "output": "FPD upgrade successful"}
+
+    def wait_for(self, cmd, cmd_parser, budget=1200, interval=15, max_retries=3):
         time_budget = budget
+        fail_retries = 0
         while True:
             cmd_result = self.xrcmd({"exec_cmd": cmd})
             if not succeeded(cmd_result):
+                if fail_retries < max_retries:
+                    self.syslogger.error('"{cmd}" command failed, will retry {left} more times'.format(
+                        cmd=cmd, left=max_retries-fail_retries)
+                    )
+                    fail_retries += 1
+                    continue
                 raise ZTPErrorException('"{cmd}" command failed'.format(cmd=cmd))
 
             done_waiting, is_success = cmd_parser(cmd_result['output'])
@@ -127,10 +171,10 @@ class ZtpApi(ZtpHelpers):
         return {"status": "error", "output": "wait time budget expired"}
 
 
-def parse_show_install(show_install_output):
+def parse_show_install(cmd_output):
     """
     Parse output of 'show install request'
-    :param show_install_output: an iterable of lines (str) from the command output
+    :param cmd_output: an iterable of lines (str) from the command output
     :return: (is_complete, is_success) tuple of bool. is_complete indicates whether the request completed,
              is_success indicates whether it was successful.
     """
@@ -139,7 +183,7 @@ def parse_show_install(show_install_output):
 
     state = None
     is_complete = False
-    for line in show_install_output:
+    for line in cmd_output:
         if state is None:
             state_match = state_regex.match(line)
             if state_match:
@@ -149,6 +193,30 @@ def parse_show_install(show_install_output):
             break
                 
     return is_complete, state is not None and state.startswith('Success')
+
+
+def parse_show_hwmodule(cmd_output):
+    """
+    Parse output of 'show hw-module fpd'
+    :param cmd_output: an iterable of lines (str) from the command output
+    :return: (is_complete, is_success) tuple of bool. is_complete indicates whether the request completed,
+             is_success indicates whether it was successful.
+    """
+    line_regex = re.compile(r'\d+/\S+\s+(?:\S+\s+){3}[B ][S ][P ]\s+(?P<status>.+?)(?:\s+\d+\.\d+){1,2}$')
+    status_complete_set = {'CURRENT', 'RLOAD REQ'}
+
+    is_complete = False
+    num_matches = 0
+    for cmd_line in cmd_output:
+        match = line_regex.match(cmd_line)
+        if match:
+            num_matches += 1
+            if match.group('status') not in status_complete_set:
+                break
+    else:
+        is_complete = True
+
+    return is_complete, num_matches > 0
 
 
 def succeeded(result, status_key='status', success_value='success'):
