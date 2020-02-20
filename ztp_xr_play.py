@@ -11,7 +11,6 @@ import re
 import urlparse
 import time
 
-# from lib.ztp_helper import ZtpHelpers
 sys.path.append("/pkg/bin/")
 from ztp_helper import ZtpHelpers
 
