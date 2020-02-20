@@ -1,7 +1,10 @@
 #! /usr/bin/env python
 """
- ztp_xr_play
+ ztp_xr_custom
 
+ Copyright (c) 2020 Cisco Systems, Inc. and/or its affiliates
+ @author Marcelo Reis
+ @version 1.0, 19/02/2020
 """
 import sys
 import os
@@ -146,9 +149,7 @@ class ZtpApi(ZtpHelpers):
             cmd_result = self.xrcmd({"exec_cmd": cmd})
             if not succeeded(cmd_result):
                 if fail_retries < max_retries:
-                    self.syslogger.error('"{cmd}" command failed, will retry {left} more times'.format(
-                        cmd=cmd, left=max_retries-fail_retries)
-                    )
+                    self.syslogger.error('"{cmd}" command failed, will retry'.format(cmd=cmd))
                     fail_retries += 1
                     continue
                 raise ZTPErrorException('"{cmd}" command failed'.format(cmd=cmd))
