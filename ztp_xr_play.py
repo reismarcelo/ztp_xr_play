@@ -39,14 +39,15 @@ def main():
         ztp_api.syslogger.info('Installing "{label}" image'.format(label=meta.golden_label))
         ztp_api.install_image(meta.golden_url)
 
-    ztp_api.syslogger.info('Checking whether FPDs are up-to-date')
-    if ztp_api.need_fpd_upgrade:
-        ztp_api.syslogger.info('Need FPD upgrade')
-        ztp_api.upgrade_fpd()
-        # Device will reload, need to exit ZTP at this point
-        return
-    else:
-        ztp_api.syslogger.info('FPD upgrade not needed')
+    if hasattr(meta, 'fpd_check') and meta.fpd_check:
+        ztp_api.syslogger.info('Checking whether FPDs are up-to-date')
+        if ztp_api.need_fpd_upgrade:
+            ztp_api.syslogger.info('FPD upgrade required')
+            ztp_api.upgrade_fpd()
+            # Device will reload, need to exit ZTP at this point
+            raise ZTPCriticalException('ZTP stopped for reload after FPD upgrade')
+        else:
+            ztp_api.syslogger.info('No FPD upgrade required')
 
     ztp_api.syslogger.info('Loading day0 configuration')
     ztp_api.load_day0_config(meta.day0_config_url)
@@ -133,13 +134,13 @@ class ZtpApi(ZtpHelpers):
             raise ZTPErrorException('Error upgrading FPDs, {detail}'.format(detail=wait_complete['output']))
 
         self.syslogger.info('FPD upgrade completed successfully, will now reload the device')
-        device_reload = self.xrcmd({"exec_cmd": "reload location all"})
+        device_reload = self.xrcmd({"exec_cmd": "reload location all noprompt"})
         if not succeeded(device_reload):
             raise ZTPErrorException('Error issuing the reload command')
 
         return {"status": "success", "output": "FPD upgrade successful"}
 
-    def wait_for(self, cmd, cmd_parser, budget=1200, interval=15, max_retries=3):
+    def wait_for(self, cmd, cmd_parser, budget=1800, interval=15, max_retries=3):
         time_budget = budget
         fail_retries = 0
         while True:
@@ -176,7 +177,7 @@ def parse_show_install(cmd_output):
     Parse output of 'show install request'
     :param cmd_output: an iterable of lines (str) from the command output
     :return: (is_complete, is_success) tuple of bool. is_complete indicates whether the request completed,
-             is_success indicates whether it was successful.
+            is_success indicates whether it was successful.
     """
     state_regex = re.compile(r'State\s*:\s*(.+?)\s*$')
     end_regex = re.compile(r'No install operation in progress')
@@ -202,8 +203,11 @@ def parse_show_hwmodule(cmd_output):
     :return: (is_complete, is_success) tuple of bool. is_complete indicates whether the request completed,
              is_success indicates whether it was successful.
     """
-    line_regex = re.compile(r'\d+/\S+\s+(?:\S+\s+){3}[B ][S ][P ]\s+(?P<status>.+?)(?:\s+\d+\.\d+){1,2}$')
+    line_regex = re.compile(
+        r'\d+/\S+\s+(?P<card>\S+)\s+(?:\S+\s+){2}[B ][S ][P ]\s+(?P<status>.+?)(?:\s+\d+\.\d+){1,2}$'
+    )
     status_complete_set = {'CURRENT', 'RLOAD REQ'}
+    card_skip_set = {'PSU2KW-ACPE', 'PWR-4.4KW-DC-V3'}
 
     is_complete = False
     num_matches = 0
@@ -211,6 +215,8 @@ def parse_show_hwmodule(cmd_output):
         match = line_regex.match(cmd_line)
         if match:
             num_matches += 1
+            if match.group('card') in card_skip_set:
+                continue
             if match.group('status') not in status_complete_set:
                 break
     else:
