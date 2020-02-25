@@ -35,7 +35,7 @@ def main():
     running_label = ztp_api.get_running_label()
     ztp_api.syslogger.info('Running: {running}, Golden: {golden}'.format(running=running_label,
                                                                          golden=meta.golden_label))
-    if running_label in (label.strip() for label in meta.golden_label.split('or')):
+    if running_label in (label.strip() for label in meta.golden_label.split(' or ')):
         ztp_api.syslogger.info('No upgrade needed')
     elif hasattr(meta, 'use_ipxe') and meta.use_ipxe:
         ztp_api.syslogger.info('Installing new image via iPXE boot')
