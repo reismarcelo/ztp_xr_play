@@ -4,7 +4,7 @@
 
  Copyright (c) 2020 Cisco Systems, Inc. and/or its affiliates
  @author Marcelo Reis
- @version 1.0, 19/02/2020
+ @version 1.1, 25/02/2020
 """
 import sys
 import os
@@ -35,10 +35,18 @@ def main():
     running_label = ztp_api.get_running_label()
     ztp_api.syslogger.info('Running: {running}, Golden: {golden}'.format(running=running_label,
                                                                          golden=meta.golden_label))
-    if running_label == meta.golden_label:
+    if running_label in (label.strip() for label in meta.golden_label.split('or')):
         ztp_api.syslogger.info('No upgrade needed')
+    elif hasattr(meta, 'use_ipxe') and meta.use_ipxe:
+        ztp_api.syslogger.info('Installing new image via iPXE boot')
+        ztp_api.install_pxie()
+        # Device will reload, need to exit ZTP at this point
+        ztp_api.syslogger.info('ZTP stopped for iPXE boot')
+        return
     else:
-        ztp_api.syslogger.info('Installing "{label}" image'.format(label=meta.golden_label))
+        ztp_api.syslogger.info('Installing "{file}" image'.format(
+            file=os.path.basename(urlparse.urlsplit(meta.golden_url).path))
+        )
         ztp_api.install_image(meta.golden_url)
 
     if hasattr(meta, 'fpd_check') and meta.fpd_check:
@@ -47,7 +55,8 @@ def main():
             ztp_api.syslogger.info('FPD upgrade required')
             ztp_api.upgrade_fpd()
             # Device will reload, need to exit ZTP at this point
-            raise ZTPCriticalException('ZTP stopped for reload after FPD upgrade')
+            ztp_api.syslogger.info('ZTP stopped for reload after FPD upgrade')
+            return
         else:
             ztp_api.syslogger.info('No FPD upgrade required')
 
@@ -124,6 +133,13 @@ class ZtpApi(ZtpHelpers):
         self.syslogger.info('Install operation completed successfully')
 
         return {"status": "success", "output": "image successfully installed"}
+
+    def install_pxie(self):
+        install = self.xrcmd({"exec_cmd": "reload bootmedia network location all noprompt".format(target=target)})
+        if not succeeded(install):
+            raise ZTPErrorException('Error issuing iPXE boot command')
+
+        return {"status": "success", "output": "ipxe boot command successfully executed"}
 
     def upgrade_fpd(self):
         fpd_upgrade = self.xrcmd({"exec_cmd": "upgrade hw-module location all fpd all"})

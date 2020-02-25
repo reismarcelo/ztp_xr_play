@@ -2,5 +2,6 @@
   "day0_config_url": "http://192.168.122.211/day0_config.txt",
   "golden_label": "7.0.12.21I",
   "golden_url": "http://192.168.122.211/files/8000-x64-7.0.12.21I.iso",
-  "fpd_check": false
+  "fpd_check": false,
+  "use_ipxe": true
 }
