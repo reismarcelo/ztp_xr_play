@@ -1,4 +1,4 @@
-# ZTP XR Play
+# ZTP XR Custom
 
 Exploring IOS-XR ZTP python capabilities to customize ZTP steps.
 
@@ -6,9 +6,12 @@ This script performs the following steps:
 - Downloads metadata json file from http server. The URL for this file is hardcoded in the script itself, METADATA_URL.
 - Compares the "golden_label" value from the metadata file with the label from "show version" output.
 - If the "golden_label" is different, then:
-    - Downloads ISO file from the URL specified in "golden_url",
-    - Performs upgrade,
-    - Router is reloaded if needed.
+    - If "use_ipxe" metadata variable is defined and is true:
+        - Issue command to iPXE boot
+    - Otherwise:
+        - Downloads ISO file from the URL specified in "golden_url",
+        - Performs upgrade,
+        - Router is reloaded if needed.
 - If "fpd_check" metadata variable is defined and is true, then:
     - Verify whether FPD upgrade is required,
     - If needed, upgrade FPDs. Reload router once FPD upgrade is complete.
