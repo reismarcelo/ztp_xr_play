@@ -15,7 +15,12 @@ This script performs the following steps:
 - If "fpd_check" metadata variable is defined and is true, then:
     - Verify whether FPD upgrade is required,
     - If needed, upgrade FPDs. Reload router once FPD upgrade is complete.
-- Downloads configuration file from the URL defined in the "day0_config_url" metadata variable, load and commit the configuration. 
+- Downloads configuration file from the URL defined in the "day0_config_url" metadata variable, load and commit the configuration.
+- If "day0_config_reboot" metadata variable is defined and is true, device is reloaded after day0 config is applied.
+- If metadata file contains REST callback settings, REST POST requests are sent at the beginning and end of the ZTP process.
+    - "notify_url" - When defined, enable REST notifications to the URL provided.
+    - "notify_username" and "notify_password" - If defined, REST POST requests are sent with HTTP Basic Authorization header.
+
 
 ## Forcing device to trigger ZTP
 
@@ -37,3 +42,16 @@ In order to have a device trigger ZTP again, issue a 'ztp clean' and wipe the co
     RP/0/RP0/CPU0:ios# reload location all
 
 
+## Variables used in the metadata file
+
+The metadata file should be in JSON format, with a dictionary containing the variable names as keys.
+
+- "day0_config_url": String containing the URL to download day0 config
+- "golden_label": String containing the label for the golden image. It is compared against the label from "show version" output.
+- "golden_url": String containing the URL to download the golden ISO.
+- "fpd_check": (optional) true or false. Default is false.
+- "use_ipxe": (optional) true or false. Default is false.
+- "day0_config_reboot": (optional) true or false. Default is false.
+- "notify_url": (optional) String containing the URL to send REST notifications. If not specified, REST notifications are disabled.
+- "notify_username": (optional) String containing username for REST notifications.
+- "notify_password": (optional) String containing password for REST notifications.
