@@ -4,7 +4,7 @@
 
  Copyright (c) 2020 Cisco Systems, Inc. and/or its affiliates
  @author Marcelo Reis
- @version 1.1, 25/02/2020
+ @version 1.3, 12/03/2020
 """
 import sys
 import os
@@ -12,6 +12,9 @@ import logging
 import json
 import re
 import urlparse
+import urllib2
+import socket
+import base64
 import time
 
 sys.path.append("/pkg/bin/")
@@ -31,6 +34,14 @@ def main():
     ztp_api.syslogger.info('Loading metadata')
     meta = ztp_api.get_metadata()
 
+    if hasattr(meta, 'notify_url'):
+        ztp_api.syslogger.info('REST notification enabled')
+        ztp_api.notify_url = meta.notify_url
+        ztp_api.notify_username = meta.notify_username if hasattr(meta, 'notify_username') else None
+        ztp_api.notify_password = meta.notify_password if hasattr(meta, 'notify_password') else None
+
+    ztp_api.notify('in_progress', 'ZTP started')
+
     ztp_api.syslogger.info('Checking whether software upgrade is needed')
     running_label = ztp_api.get_running_label()
     ztp_api.syslogger.info('Running: {running}, Golden: {golden}'.format(running=running_label,
@@ -39,7 +50,7 @@ def main():
         ztp_api.syslogger.info('No upgrade needed')
     elif hasattr(meta, 'use_ipxe') and meta.use_ipxe:
         ztp_api.syslogger.info('Installing new image via iPXE boot')
-        ztp_api.install_pxie()
+        ztp_api.install_ipxe()
         # Device will reload, need to exit ZTP at this point
         ztp_api.syslogger.info('ZTP stopped for iPXE boot')
         return
@@ -61,12 +72,20 @@ def main():
             ztp_api.syslogger.info('No FPD upgrade required')
 
     ztp_api.syslogger.info('Loading day0 configuration')
-    ztp_api.load_day0_config(meta.day0_config_url)
+    ztp_api.load_day0_config(meta.day0_config_url, hasattr(meta, 'day0_config_reboot') and meta.day0_config_reboot)
+
+    ztp_api.notify('complete', 'ZTP completed successfully')
 
     ztp_api.syslogger.info('Custom ZTP process complete')
 
 
 class ZtpApi(ZtpHelpers):
+    def __init__(self, *args, **kwargs):
+        super(ZtpApi, self).__init__(*args, **kwargs)
+        self.notify_url = None
+        self.notify_username = None
+        self.notify_password = None
+
     def get_metadata(self, target_folder='/disk0:/ztp'):
         download = self.download_file(METADATA_URL, target_folder)
         if not succeeded(download):
@@ -99,7 +118,7 @@ class ZtpApi(ZtpHelpers):
 
         return not is_complete
 
-    def load_day0_config(self, url, target_folder='/disk0:/ztp'):
+    def load_day0_config(self, url, reboot_on_day0, target_folder='/disk0:/ztp'):
         download = self.download_file(url, target_folder)
         if not succeeded(download):
             raise ZTPErrorException('Error downloading day0 configuration')
@@ -107,6 +126,12 @@ class ZtpApi(ZtpHelpers):
         apply_config = self.xrapply(get_filename(download), 'Add ZTP day0 configuration')
         if not succeeded(apply_config):
             raise ZTPErrorException('Error applying day0 config')
+
+        if reboot_on_day0:
+            self.syslogger.info('Day0 configuration requires reboot, will now reload the device')
+            device_reload = self.xrcmd({"exec_cmd": "reload location all noprompt"})
+            if not succeeded(device_reload):
+                raise ZTPErrorException('Error issuing the reload command')
 
         return {"status": "success", "output": "day0 configuration loaded successfully"}
 
@@ -134,8 +159,8 @@ class ZtpApi(ZtpHelpers):
 
         return {"status": "success", "output": "image successfully installed"}
 
-    def install_pxie(self):
-        install = self.xrcmd({"exec_cmd": "reload bootmedia network location all noprompt".format(target=target)})
+    def install_ipxe(self):
+        install = self.xrcmd({"exec_cmd": "reload bootmedia network location all noprompt"})
         if not succeeded(install):
             raise ZTPErrorException('Error issuing iPXE boot command')
 
@@ -186,6 +211,16 @@ class ZtpApi(ZtpHelpers):
                 break
 
         return {"status": "error", "output": "wait time budget expired"}
+
+    def notify(self, status, message):
+        if self.notify_url is None:
+            return
+
+        result = rest_callback(
+            self.notify_url, {'status': status, 'message': message}, self.notify_username, self.notify_password
+        )
+        if not succeeded(result):
+            self.syslogger.error('REST callback failed: {info}'.format(info=result['output']))
 
 
 def parse_show_install(cmd_output):
@@ -247,6 +282,40 @@ def succeeded(result, status_key='status', success_value='success'):
 
 def get_filename(download_result, folder_key='folder', filename_key='filename'):
     return os.path.join(download_result[folder_key], download_result[filename_key])
+
+
+def rest_callback(url, payload=None, username=None, password=None, timeout=10):
+    """
+    Sends HTTP request to URL. If payload is provided, this will be a POST request; otherwise it is a GET request.
+    If username/password are provided, HTTP basic authentication is used.
+    :param url: String representing the URL target
+    :param payload: (optional) Python object that can be encoded as json string.
+    :param username: (optional) String
+    :param password: (optional) String
+    :param timeout: (optional) Timeout value in seconds
+    :return: dictionary with status and output { 'status': 'error/success', 'output': ''}
+    """
+    request = urllib2.Request(
+        url,
+        json.dumps(payload) if payload is not None else None,
+        {'Content-Type': 'application/json'}
+    )
+    if username and password:
+        base64str = base64.b64encode('{user}:{password}'.format(user=username, password=password))
+        request.add_header('Authorization', 'Basic {base64str}'.format(base64str=base64str))
+
+    try:
+        f = urllib2.urlopen(request, timeout=timeout)
+        response = f.read()
+        f.close()
+    except urllib2.HTTPError as e:
+        return {"status": "error", "output": "HTTP Code: {code}, {info}".format(code=e.code, info=e.reason)}
+    except urllib2.URLError as e:
+        return {"status": "error", "output": "{details}".format(details=e.reason)}
+    except socket.timeout:
+        return {"status": "error", "output": "REST callback timeout"}
+
+    return {"status": "success", "output": "{response}".format(response=response)}
 
 
 class ZtpMetadata(object):
