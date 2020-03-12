@@ -55,3 +55,21 @@ The metadata file should be in JSON format, with a dictionary containing the var
 - "notify_url": (optional) String containing the URL to send REST notifications. If not specified, REST notifications are disabled.
 - "notify_username": (optional) String containing username for REST notifications.
 - "notify_password": (optional) String containing password for REST notifications.
+
+
+## Testing REST notifications using the nc utility
+
+The following cli can be used in order to quickly spin up a listener for REST notifications for testing purposes:
+
+    nc -o dump.txt -l 8080 -k -c 'echo -e "HTTP/1.1 200 OK\n\n $(date)"' 
+
+The REST notification is a POST request with payload in JSON format.
+
+Notification sent just after the metadata is loaded:
+{'status': 'in_progress', 'message': 'ZTP started'}
+
+Notification sent once ZTP is completed and reload is initiated: 
+{'status': 'complete_reload', 'message': 'ZTP completed, device will reload'}
+
+Notification sent once ZTP is completed and no reload is performed: 
+{'status': 'complete_ready', 'message': 'ZTP completed, device is ready'}

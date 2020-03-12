@@ -4,5 +4,8 @@
   "golden_url": "http://192.168.122.211/files/8000-x64-7.0.12.21I.iso",
   "fpd_check": false,
   "use_ipxe": true,
-  "day0_config_reboot": true
+  "day0_config_reboot": true,
+  "notify_url": "http://192.168.122.211:8080/api",
+  "notify_username": "admin",
+  "notify_password": "admin"
 }

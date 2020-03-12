@@ -65,18 +65,23 @@ def main():
         if ztp_api.need_fpd_upgrade:
             ztp_api.syslogger.info('FPD upgrade required')
             ztp_api.upgrade_fpd()
-            # Device will reload, need to exit ZTP at this point
+            ztp_api.syslogger.info('FPD upgrade completed successfully, will now reload the device')
+            ztp_api.router_reload()
             ztp_api.syslogger.info('ZTP stopped for reload after FPD upgrade')
             return
         else:
             ztp_api.syslogger.info('No FPD upgrade required')
 
     ztp_api.syslogger.info('Loading day0 configuration')
-    ztp_api.load_day0_config(meta.day0_config_url, hasattr(meta, 'day0_config_reboot') and meta.day0_config_reboot)
+    ztp_api.load_config(meta.day0_config_url)
 
-    ztp_api.notify('complete', 'ZTP completed successfully')
-
-    ztp_api.syslogger.info('Custom ZTP process complete')
+    if hasattr(meta, 'day0_config_reboot') and meta.day0_config_reboot:
+        ztp_api.syslogger.info('Custom ZTP process complete, will now reload the device')
+        ztp_api.notify('complete_reload', 'ZTP completed, device will reload')
+        ztp_api.router_reload()
+    else:
+        ztp_api.syslogger.info('Custom ZTP process complete')
+        ztp_api.notify('complete_ready', 'ZTP completed, device is ready')
 
 
 class ZtpApi(ZtpHelpers):
@@ -118,22 +123,16 @@ class ZtpApi(ZtpHelpers):
 
         return not is_complete
 
-    def load_day0_config(self, url, reboot_on_day0, target_folder='/disk0:/ztp'):
+    def load_config(self, url, target_folder='/disk0:/ztp'):
         download = self.download_file(url, target_folder)
         if not succeeded(download):
-            raise ZTPErrorException('Error downloading day0 configuration')
+            raise ZTPErrorException('Error downloading configuration file')
 
-        apply_config = self.xrapply(get_filename(download), 'Add ZTP day0 configuration')
+        apply_config = self.xrapply(get_filename(download), 'Add ZTP configuration')
         if not succeeded(apply_config):
             raise ZTPErrorException('Error applying day0 config')
 
-        if reboot_on_day0:
-            self.syslogger.info('Day0 configuration requires reboot, will now reload the device')
-            device_reload = self.xrcmd({"exec_cmd": "reload location all noprompt"})
-            if not succeeded(device_reload):
-                raise ZTPErrorException('Error issuing the reload command')
-
-        return {"status": "success", "output": "day0 configuration loaded successfully"}
+        return {"status": "success", "output": "configuration loaded successfully"}
 
     def install_image(self, url, target_folder='/harddisk:'):
         filename = os.path.basename(urlparse.urlsplit(url).path)
@@ -176,12 +175,14 @@ class ZtpApi(ZtpHelpers):
         if not succeeded(wait_complete):
             raise ZTPErrorException('Error upgrading FPDs, {detail}'.format(detail=wait_complete['output']))
 
-        self.syslogger.info('FPD upgrade completed successfully, will now reload the device')
+        return {"status": "success", "output": "FPD upgrade successful"}
+
+    def router_reload(self):
         device_reload = self.xrcmd({"exec_cmd": "reload location all noprompt"})
         if not succeeded(device_reload):
             raise ZTPErrorException('Error issuing the reload command')
 
-        return {"status": "success", "output": "FPD upgrade successful"}
+        return {"status": "success", "output": "Reload command successful"}
 
     def wait_for(self, cmd, cmd_parser, budget=1800, interval=15, max_retries=3):
         time_budget = budget
