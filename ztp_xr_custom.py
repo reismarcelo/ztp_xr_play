@@ -4,7 +4,7 @@
 
  Copyright (c) 2020 Cisco Systems, Inc. and/or its affiliates
  @author Marcelo Reis
- @version 1.3, 12/03/2020
+ @version 1.4, 15/10/2020
 """
 import sys
 import os
@@ -16,6 +16,7 @@ import urllib2
 import socket
 import base64
 import time
+from functools import partial
 
 sys.path.append("/pkg/bin/")
 from ztp_helper import ZtpHelpers
@@ -59,6 +60,9 @@ def main():
             file=os.path.basename(urlparse.urlsplit(meta.golden_url).path))
         )
         ztp_api.install_image(meta.golden_url)
+
+    ztp_api.syslogger.info('Wait for any in-progress auto FPD upgrades to complete')
+    ztp_api.auto_fpd_upgrade_wait()
 
     if hasattr(meta, 'fpd_check') and meta.fpd_check:
         ztp_api.syslogger.info('Checking whether FPDs are up-to-date')
@@ -165,6 +169,14 @@ class ZtpApi(ZtpHelpers):
 
         return {"status": "success", "output": "ipxe boot command successfully executed"}
 
+    def auto_fpd_upgrade_wait(self):
+        wait_complete = self.wait_for('show platform', partial(parse_show_platform, 'FPD_UPGRADE'))
+        if not succeeded(wait_complete):
+            raise ZTPErrorException(
+                'Error waiting auto fpd upgrades to complete, {detail}'.format(detail=wait_complete['output'])
+            )
+        return {"status": "success", "output": "Auto FPD upgrade wait successful"}
+
     def upgrade_fpd(self):
         fpd_upgrade = self.xrcmd({"exec_cmd": "upgrade hw-module location all fpd all"})
         if not succeeded(fpd_upgrade):
@@ -270,6 +282,36 @@ def parse_show_hwmodule(cmd_output):
             if match.group('card') in card_skip_set:
                 continue
             if match.group('status') not in status_complete_set:
+                break
+    else:
+        is_complete = True
+
+    return is_complete, num_matches > 0
+
+
+def parse_show_platform(undesired_state, cmd_output):
+    """
+    Parse output of 'show platform'
+    :param cmd_output: an iterable of lines (str) from the command output
+    :param undesired_state: LC state that is not desired. That is, is_complete will return false if any LC is in this
+                            state.
+    :return: (is_complete, is_success) tuple of bool. is_complete indicates whether the request completed,
+             is_success indicates whether it was successful.
+    """
+    line_regex = re.compile(
+        r'(?P<node>\d+/\S+)'
+        r'\s+(?P<lc>[a-zA-Z0-9\-]+)(?:\((?P<redundancy_state>[a-zA-Z]+)\))?(?:\s+(?P<plim>[a-zA-Z/]+))?'
+        r'\s+(?P<state>(IOS XR RUN|OK|OPERATIONAL|FPD_UPGRADE)+)'
+        r'\s+(?P<config_state>[a-zA-Z,]+)$'
+    )
+
+    is_complete = False
+    num_matches = 0
+    for cmd_line in cmd_output:
+        match = line_regex.match(cmd_line)
+        if match:
+            num_matches += 1
+            if match.group('state') == undesired_state:
                 break
     else:
         is_complete = True
