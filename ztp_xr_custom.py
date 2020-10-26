@@ -4,7 +4,7 @@
 
  Copyright (c) 2020 Cisco Systems, Inc. and/or its affiliates
  @author Marcelo Reis
- @version 1.4, 15/10/2020
+ @version 1.5, 26/10/2020
 """
 import sys
 import os
@@ -62,24 +62,25 @@ def main():
         ztp_api.install_image(meta.golden_url)
 
     ztp_api.syslogger.info('Wait for any in-progress auto FPD upgrades to complete')
-    ztp_api.auto_fpd_upgrade_wait()
+    ztp_api.fpd_upgrade_wait()
+
+    day0_config_reboot = hasattr(meta, 'day0_config_reboot') and meta.day0_config_reboot
 
     if hasattr(meta, 'fpd_check') and meta.fpd_check:
-        ztp_api.syslogger.info('Checking whether FPDs are up-to-date')
-        if ztp_api.need_fpd_upgrade:
-            ztp_api.syslogger.info('FPD upgrade required')
-            ztp_api.upgrade_fpd()
-            ztp_api.syslogger.info('FPD upgrade completed successfully, will now reload the device')
+        ztp_api.syslogger.info('Initiating FPD upgrades')
+        ztp_api.upgrade_fpd()
+        ztp_api.syslogger.info('Wait for FPD upgrades to complete')
+        ztp_api.fpd_upgrade_wait()
+
+        if not day0_config_reboot:
             ztp_api.router_reload()
             ztp_api.syslogger.info('ZTP stopped for reload after FPD upgrade')
             return
-        else:
-            ztp_api.syslogger.info('No FPD upgrade required')
 
     ztp_api.syslogger.info('Loading day0 configuration')
     ztp_api.load_config(meta.day0_config_url)
 
-    if hasattr(meta, 'day0_config_reboot') and meta.day0_config_reboot:
+    if day0_config_reboot:
         ztp_api.syslogger.info('Custom ZTP process complete, will now reload the device')
         ztp_api.notify('complete_reload', 'ZTP completed, device will reload')
         ztp_api.router_reload()
@@ -169,11 +170,11 @@ class ZtpApi(ZtpHelpers):
 
         return {"status": "success", "output": "ipxe boot command successfully executed"}
 
-    def auto_fpd_upgrade_wait(self):
+    def fpd_upgrade_wait(self):
         wait_complete = self.wait_for('show platform', partial(parse_show_platform, 'FPD_UPGRADE'))
         if not succeeded(wait_complete):
             raise ZTPErrorException(
-                'Error waiting auto fpd upgrades to complete, {detail}'.format(detail=wait_complete['output'])
+                'Error waiting fpd upgrades to complete, {detail}'.format(detail=wait_complete['output'])
             )
         return {"status": "success", "output": "Auto FPD upgrade wait successful"}
 
@@ -181,11 +182,6 @@ class ZtpApi(ZtpHelpers):
         fpd_upgrade = self.xrcmd({"exec_cmd": "upgrade hw-module location all fpd all"})
         if not succeeded(fpd_upgrade):
             raise ZTPErrorException('Error upgrading FPDs')
-
-        self.syslogger.info('Waiting for FPD upgrade to complete')
-        wait_complete = self.wait_for('show hw-module fpd', parse_show_hwmodule)
-        if not succeeded(wait_complete):
-            raise ZTPErrorException('Error upgrading FPDs, {detail}'.format(detail=wait_complete['output']))
 
         return {"status": "success", "output": "FPD upgrade successful"}
 
