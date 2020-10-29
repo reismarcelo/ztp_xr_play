@@ -4,7 +4,7 @@
 
  Copyright (c) 2020 Cisco Systems, Inc. and/or its affiliates
  @author Marcelo Reis
- @version 1.5, 26/10/2020
+ @version 1.6, 28/10/2020
 """
 import sys
 import os
@@ -171,7 +171,7 @@ class ZtpApi(ZtpHelpers):
         return {"status": "success", "output": "ipxe boot command successfully executed"}
 
     def fpd_upgrade_wait(self):
-        wait_complete = self.wait_for('show platform', partial(parse_show_platform, 'FPD_UPGRADE'))
+        wait_complete = self.wait_for('show platform', partial(parse_show_platform, {'IOS XR RUN', 'OPERATIONAL'}))
         if not succeeded(wait_complete):
             raise ZTPErrorException(
                 'Error waiting fpd upgrades to complete, {detail}'.format(detail=wait_complete['output'])
@@ -285,19 +285,19 @@ def parse_show_hwmodule(cmd_output):
     return is_complete, num_matches > 0
 
 
-def parse_show_platform(undesired_state, cmd_output):
+def parse_show_platform(desired_states, cmd_output):
     """
     Parse output of 'show platform'
+    :param desired_states: Set of one or more LC state that is desired. That is, is_complete will return true
+                           only if all LCs are in any of the desired states.
     :param cmd_output: an iterable of lines (str) from the command output
-    :param undesired_state: LC state that is not desired. That is, is_complete will return false if any LC is in this
-                            state.
     :return: (is_complete, is_success) tuple of bool. is_complete indicates whether the request completed,
              is_success indicates whether it was successful.
     """
     line_regex = re.compile(
         r'(?P<node>\d+/\S+)'
         r'\s+(?P<lc>[a-zA-Z0-9\-]+)(?:\((?P<redundancy_state>[a-zA-Z]+)\))?(?:\s+(?P<plim>[a-zA-Z/]+))?'
-        r'\s+(?P<state>(IOS XR RUN|OK|OPERATIONAL|FPD_UPGRADE)+)'
+        r'\s+(?P<state>(IOS XR RUN|OK|OPERATIONAL|FPD_UPGRADE|BOOTING|PLATFORM INITIALIZED|SHUTTING DOWN|CARD_ACCESS_DOWN|ONLINE|DATA PATH POWERED ON)+)'
         r'\s+(?P<config_state>[a-zA-Z,]+)$'
     )
 
@@ -307,7 +307,7 @@ def parse_show_platform(undesired_state, cmd_output):
         match = line_regex.match(cmd_line)
         if match:
             num_matches += 1
-            if match.group('state') == undesired_state:
+            if match.group('state') not in desired_states:
                 break
     else:
         is_complete = True
