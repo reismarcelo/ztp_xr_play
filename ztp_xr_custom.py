@@ -4,7 +4,7 @@
 
  Copyright (c) 2020 Cisco Systems, Inc. and/or its affiliates
  @author Marcelo Reis
- @version 1.6, 28/10/2020
+ @version 1.7, 11/11/2020
 """
 import sys
 import os
@@ -70,6 +70,8 @@ def main():
         ztp_api.syslogger.info('Initiating FPD upgrades')
         ztp_api.upgrade_fpd()
         ztp_api.syslogger.info('Wait for FPD upgrades to complete')
+        # Adding an extra wait in order for sh platform to reflect the fpd upgrade status
+        time.sleep(60)
         ztp_api.fpd_upgrade_wait()
 
         if not day0_config_reboot:
