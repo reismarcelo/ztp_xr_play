@@ -4,7 +4,7 @@
 
  Copyright (c) 2020 Cisco Systems, Inc. and/or its affiliates
  @author Marcelo Reis
- @version 1.7, 11/11/2020
+ @version 1.8, 11/11/2020
 """
 import sys
 import os
@@ -70,8 +70,8 @@ def main():
         ztp_api.syslogger.info('Initiating FPD upgrades')
         ztp_api.upgrade_fpd()
         ztp_api.syslogger.info('Wait for FPD upgrades to complete')
-        # Adding an extra wait in order for sh platform to reflect the fpd upgrade status
-        time.sleep(60)
+        # Adding an extra wait in order for sh hw-module fpd to reflect the fpd upgrade status
+        time.sleep(30)
         ztp_api.fpd_upgrade_wait()
 
         if not day0_config_reboot:
@@ -118,18 +118,6 @@ class ZtpApi(ZtpHelpers):
         else:
             raise ZTPErrorException('"show version" command parse failed')
 
-    @property
-    def need_fpd_upgrade(self):
-        show_cmd = self.xrcmd({"exec_cmd": "show hw-module fpd"})
-        if not succeeded(show_cmd):
-            raise ZTPErrorException("Error issuing the 'show hw-module fpd' command")
-
-        is_complete, is_success = parse_show_hwmodule(show_cmd['output'])
-        if not is_success:
-            raise ZTPErrorException("Error while checking FPD status")
-
-        return not is_complete
-
     def load_config(self, url, target_folder='/disk0:/ztp'):
         download = self.download_file(url, target_folder)
         if not succeeded(download):
@@ -173,12 +161,18 @@ class ZtpApi(ZtpHelpers):
         return {"status": "success", "output": "ipxe boot command successfully executed"}
 
     def fpd_upgrade_wait(self):
+        wait_complete = self.wait_for('show hw-module fpd', parse_show_hwmodule)
+        if not succeeded(wait_complete):
+            raise ZTPErrorException(
+                'Error waiting fpd upgrades to complete, {detail}'.format(detail=wait_complete['output'])
+            )
+
         wait_complete = self.wait_for('show platform', partial(parse_show_platform, {'IOS XR RUN', 'OPERATIONAL'}))
         if not succeeded(wait_complete):
             raise ZTPErrorException(
                 'Error waiting fpd upgrades to complete, {detail}'.format(detail=wait_complete['output'])
             )
-        return {"status": "success", "output": "Auto FPD upgrade wait successful"}
+        return {"status": "success", "output": "FPD upgrade wait successful"}
 
     def upgrade_fpd(self):
         fpd_upgrade = self.xrcmd({"exec_cmd": "upgrade hw-module location all fpd all"})
@@ -266,10 +260,8 @@ def parse_show_hwmodule(cmd_output):
              is_success indicates whether it was successful.
     """
     line_regex = re.compile(
-        r'\d+/\S+\s+(?P<card>\S+)\s+(?:\S+\s+){2}[B ][S ][P ]\s+(?P<status>.+?)(?:\s+\d+\.\d+){1,2}$'
+        r'\d+/\S+\s+(?P<fpd_line>.+)$'
     )
-    status_complete_set = {'CURRENT', 'RLOAD REQ'}
-    card_skip_set = {'PSU2KW-ACPE', 'PWR-4.4KW-DC-V3'}
 
     is_complete = False
     num_matches = 0
@@ -277,9 +269,7 @@ def parse_show_hwmodule(cmd_output):
         match = line_regex.match(cmd_line)
         if match:
             num_matches += 1
-            if match.group('card') in card_skip_set:
-                continue
-            if match.group('status') not in status_complete_set:
+            if 'UPGD PREP' in match.group('fpd_line'):
                 break
     else:
         is_complete = True
