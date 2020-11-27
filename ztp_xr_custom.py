@@ -4,7 +4,7 @@
 
  Copyright (c) 2020 Cisco Systems, Inc. and/or its affiliates
  @author Marcelo Reis
- @version 1.8, 11/11/2020
+ @version 1.9, 27/11/2020
 """
 import sys
 import os
@@ -32,62 +32,61 @@ SYSLOG_CONFIG = {
 def main():
     ztp_api = ZtpApi(**SYSLOG_CONFIG)
 
-    ztp_api.syslogger.info('Loading metadata')
+    ztp_api.log_info('Loading metadata')
     meta = ztp_api.get_metadata()
 
     if hasattr(meta, 'notify_url'):
-        ztp_api.syslogger.info('REST notification enabled')
+        ztp_api.log_info('REST notification enabled')
         ztp_api.notify_url = meta.notify_url
         ztp_api.notify_username = meta.notify_username if hasattr(meta, 'notify_username') else None
         ztp_api.notify_password = meta.notify_password if hasattr(meta, 'notify_password') else None
 
     ztp_api.notify('in_progress', 'ZTP started')
 
-    ztp_api.syslogger.info('Checking whether software upgrade is needed')
+    ztp_api.log_info('Checking whether software upgrade is needed')
     running_label = ztp_api.get_running_label()
-    ztp_api.syslogger.info('Running: {running}, Golden: {golden}'.format(running=running_label,
-                                                                         golden=meta.golden_label))
+    ztp_api.log_info('Running: {running}, Golden: {golden}'.format(running=running_label, golden=meta.golden_label))
     if running_label in (label.strip() for label in meta.golden_label.split(' or ')):
-        ztp_api.syslogger.info('No upgrade needed')
+        ztp_api.log_info('No upgrade needed')
     elif hasattr(meta, 'use_ipxe') and meta.use_ipxe:
-        ztp_api.syslogger.info('Installing new image via iPXE boot')
+        ztp_api.log_info('Installing new image via iPXE boot')
         ztp_api.install_ipxe()
         # Device will reload, need to exit ZTP at this point
-        ztp_api.syslogger.info('ZTP stopped for iPXE boot')
+        ztp_api.log_info('ZTP stopped for iPXE boot')
         return
     else:
-        ztp_api.syslogger.info('Installing "{file}" image'.format(
+        ztp_api.log_info('Installing "{file}" image'.format(
             file=os.path.basename(urlparse.urlsplit(meta.golden_url).path))
         )
         ztp_api.install_image(meta.golden_url)
 
-    ztp_api.syslogger.info('Wait for any in-progress auto FPD upgrades to complete')
+    ztp_api.log_info('Wait for any in-progress auto FPD upgrades to complete')
     ztp_api.fpd_upgrade_wait()
 
     day0_config_reboot = hasattr(meta, 'day0_config_reboot') and meta.day0_config_reboot
 
     if hasattr(meta, 'fpd_check') and meta.fpd_check:
-        ztp_api.syslogger.info('Initiating FPD upgrades')
+        ztp_api.log_info('Initiating FPD upgrades')
         ztp_api.upgrade_fpd()
-        ztp_api.syslogger.info('Wait for FPD upgrades to complete')
+        ztp_api.log_info('Wait for FPD upgrades to complete')
         # Adding an extra wait in order for sh hw-module fpd to reflect the fpd upgrade status
         time.sleep(30)
         ztp_api.fpd_upgrade_wait()
 
         if not day0_config_reboot:
             ztp_api.router_reload()
-            ztp_api.syslogger.info('ZTP stopped for reload after FPD upgrade')
+            ztp_api.log_info('ZTP stopped for reload after FPD upgrade')
             return
 
-    ztp_api.syslogger.info('Loading day0 configuration')
+    ztp_api.log_info('Loading day0 configuration')
     ztp_api.load_config(meta.day0_config_url)
 
     if day0_config_reboot:
-        ztp_api.syslogger.info('Custom ZTP process complete, will now reload the device')
+        ztp_api.log_info('Custom ZTP process complete, will now reload the device')
         ztp_api.notify('complete_reload', 'ZTP completed, device will reload')
         ztp_api.router_reload()
     else:
-        ztp_api.syslogger.info('Custom ZTP process complete')
+        ztp_api.log_info('Custom ZTP process complete')
         ztp_api.notify('complete_ready', 'ZTP completed, device is ready')
 
 
@@ -97,6 +96,13 @@ class ZtpApi(ZtpHelpers):
         self.notify_url = None
         self.notify_username = None
         self.notify_password = None
+        self.log_label = self.get_log_label('[{serial_number}]: ')
+
+    def log_info(self, log_msg):
+        self.syslogger.info('{label}{msg}'.format(label=self.log_label, msg=log_msg))
+
+    def log_error(self, log_msg):
+        self.syslogger.error('{label}{msg}'.format(label=self.log_label, msg=log_msg))
 
     def get_metadata(self, target_folder='/disk0:/ztp'):
         download = self.download_file(METADATA_URL, target_folder)
@@ -118,6 +124,19 @@ class ZtpApi(ZtpHelpers):
         else:
             raise ZTPErrorException('"show version" command parse failed')
 
+    def get_log_label(self, format_str):
+        show_inventory = self.xrcmd({"exec_cmd": "show inventory chassis"})
+        if not succeeded(show_inventory):
+            raise ZTPErrorException('"show inventory chassis" command failed')
+
+        regex = re.compile(r'SN:\s+(\S+)')
+        for line in show_inventory['output']:
+            match = regex.search(line)
+            if match:
+                return format_str.format(serial_number=match.group(1))
+        else:
+            raise ZTPErrorException('"show inventory chassis" command parse failed')
+
     def load_config(self, url, target_folder='/disk0:/ztp'):
         download = self.download_file(url, target_folder)
         if not succeeded(download):
@@ -134,22 +153,22 @@ class ZtpApi(ZtpHelpers):
         target = os.path.join(target_folder, filename)
 
         if os.path.exists(target):
-            self.syslogger.info('Image already on {folder}, skipping download'.format(folder=target_folder))
+            self.log_info('Image already on {folder}, skipping download'.format(folder=target_folder))
         else:
             download = self.download_file(url, target_folder)
             if not succeeded(download):
                 raise ZTPErrorException('Error downloading image')
-            self.syslogger.info('Image download complete')
+            self.log_info('Image download complete')
 
         install = self.xrcmd({"exec_cmd": "install replace {target} noprompt commit".format(target=target)})
         if not succeeded(install):
             raise ZTPErrorException('Error installing image')
 
-        self.syslogger.info('Waiting for install operation to complete')
+        self.log_info('Waiting for install operation to complete')
         wait_complete = self.wait_for('show install request', parse_show_install)
         if not succeeded(wait_complete):
             raise ZTPErrorException('Error installing image, {detail}'.format(detail=wait_complete['output']))
-        self.syslogger.info('Install operation completed successfully')
+        self.log_info('Install operation completed successfully')
 
         return {"status": "success", "output": "image successfully installed"}
 
@@ -195,7 +214,7 @@ class ZtpApi(ZtpHelpers):
             cmd_result = self.xrcmd({"exec_cmd": cmd})
             if not succeeded(cmd_result):
                 if fail_retries < max_retries:
-                    self.syslogger.error('"{cmd}" command failed, will retry'.format(cmd=cmd))
+                    self.log_error('"{cmd}" command failed, will retry'.format(cmd=cmd))
                     fail_retries += 1
                     continue
                 raise ZTPErrorException('"{cmd}" command failed'.format(cmd=cmd))
@@ -209,10 +228,10 @@ class ZtpApi(ZtpHelpers):
 
             time_budget -= interval
             if time_budget > 0:
-                self.syslogger.info('Waiting...')
+                self.log_info('Waiting...')
                 time.sleep(interval)
             else:
-                self.syslogger.info('Wait time budget expired')
+                self.log_info('Wait time budget expired')
                 break
 
         return {"status": "error", "output": "wait time budget expired"}
@@ -222,10 +241,13 @@ class ZtpApi(ZtpHelpers):
             return
 
         result = rest_callback(
-            self.notify_url, {'status': status, 'message': message}, self.notify_username, self.notify_password
+            self.notify_url,
+            {'status': status, 'message': '{label}{msg}'.format(label=self.log_label, msg=message)},
+            self.notify_username,
+            self.notify_password
         )
         if not succeeded(result):
-            self.syslogger.error('REST callback failed: {info}'.format(info=result['output']))
+            self.log_error('REST callback failed: {info}'.format(info=result['output']))
 
 
 def parse_show_install(cmd_output):
